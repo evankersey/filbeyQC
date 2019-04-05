@@ -8,7 +8,8 @@
 #	efficiency, only parse mri once, store differences in multidiminsional array and check standard deviation from that
 # 	figure out optimal sensitivity
 #		find greatest difference / sd for images with no pathology and with pathology
-#	
+#	do voxels have to be contigous to determine if a slice is bad? could there be a threshold for a certain number of non-contigues voxels that could determine a slice to be bad?
+#	build recursive function to find contigous voxels below threshold
 
 import os
 import sys
@@ -19,59 +20,63 @@ with warnings.catch_warnings():
 import nibabel as nib
 
 
-#number of standard deviations
-sensitivity = 10 
+## the number of standard deviations from the mean for a voxel to be bad
+sensitivity = 2
+## the number of consecutive voxels required for a slice to be bad
+threshold = 10
 
 
-#gets nifti as input
+## gets nifti as input
 input_img=sys.argv[1]
 
+#load nifti to object
 img = nib.load(input_img)
 img_data = img.get_data()
 data_obj = img.dataobj
+
 ## get dimensions
 x_len = data_obj.shape[0]
 y_len = data_obj.shape[1]
 z_len = data_obj.shape[2]
 
-
-## creates array containing the value of one standard deviation of the difference in voxel intensity for each slice
-slice_dif_std = []
-slice_dif_list = []
+##calculate standard deviation and mean in each slice
+sliceVals = []
+stdPerSlice = []
+meanPerSlice = []
 for z in range(0, z_len):
-	slice_dif_list.clear() #new list for each z
-	for y in range(0, y_len):
+	sliceVals.clear() #clears list
+	for y in range(0, y_len): #creates a list of all values in slice that exist (not 0)
 		for x in range(0, x_len):
-			if img_data[x,y,z] and img_data[x+1,y,z]: # checks if both voxels exist (x direction)
-				slice_dif_list.append(abs(img_data[x,y,z] - img_data[x+1,y,z])) #appends the change in intensity to array
-			if img_data[x,y,z] and img_data[x,y+1,z]: # (y direction)
-				slice_dif_list.append(abs(img_data[x,y,z] - img_data[x,y+1,z]))
-	if len(slice_dif_list): # if the list exists for this z (the slize is not all zeros)
-		slice_dif_std.append(np.std(slice_dif_list))
-	else:	
-		slice_dif_std.append(0) # if the slice has no voxels on it
+			if img_data[x,y,z]:
+				sliceVals.append(img_data[x,y,z])
+	if len(sliceVals): #excludes slices that are outside of the brain while maintaining correlation with slices position
+		stdPerSlice.append(np.std(sliceVals))
+		meanPerSlice.append(np.mean(sliceVals))
+	else:
+		stdPerSlice.append(0)
+		meanPerSlice.append(0)
 
 
+def checkBadSpot(x,y,z, threshold):
+	badCount = 0
+	while img_data[x+i,y,z] < threshold && img_data[x+i,y,z]:
+		badCount++
+	return badCount
 
-badSlice = [0] * z_len # array of slices good or bad
+## find voxels outside of std range
+badSlices = [0] * z_len # list of all slices, initialized to all slices normal
 for z in range(0, z_len):
-	if slice_dif_std[z]: # checks if slice contains data
+	if stdPerSlice[z]: #makes sure slice is inside of brain
+	thresholdVal = meanPerSlice[z] - (stdPerSlice[z] * sensitivity) #lowest normal value
 		for y in range(0, y_len):
-			if badSlice[z]: # skips if slice has already determined to be bad
-				break
+			if badSlices[z]:
+				break #skips the rest of a slice if it is already determined to be bad
 			for x in range(0, x_len):
-				if img_data[x,y,z] and img_data[x+1,y,z]: # if both vexels exist
-					if (img_data[x,y,z] - img_data[x+1,y,z]) > (slice_dif_std[z] * sensitivity): # if slice differences are greater than the sensitivity value for slice
-						badSlice[z] = True # slice is bad
-						break
-				if img_data[x,y,z] and img_data[x,y+1,z]:
-					if (img_data[x,y,z] - img_data[x,y+1,z]) > (slice_dif_std[z] * sensitivity):
-						badSlice[z] = True
-						break
-# find number of bad slices in image
-numBadSlice = 0
-for i in badSlice:
-	if badSlice[i] == True:
-		numBadSlice += 1
-
-print("number of bad slices: ", numBadSlice)
+				badCount = checkBadSpot(x,y,z,threshold) ##FIXME find a way to add badcount to x while staying within range
+			if badCount > threshold:
+				badSlices[z] = True
+count = 0
+for i in badSlices:
+	if badSlices[i] == True:
+		count++
+print("number of bad slices: ", count)
